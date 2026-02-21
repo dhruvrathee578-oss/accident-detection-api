@@ -1,5 +1,20 @@
 from fastapi import FastAPI, File, UploadFile
 from fastapi.responses import JSONResponse
+import requests
+import os
+
+app = FastAPI()
+
+HF_TOKEN = os.getenv("HF_TOKEN")
+
+API_URL = "https://api-inference.huggingface.co/models/openai/clip-vit-base-patch32"
+
+headers = {
+    "Authorization": f"Bearer {HF_TOKEN}"
+}
+
+from fastapi import FastAPI, File, UploadFile
+from fastapi.responses import JSONResponse
 from PIL import Image
 import torch
 from transformers import CLIPProcessor, CLIPModel
@@ -76,3 +91,20 @@ async def predict(file: UploadFile = File(...)):
         "prediction": result,
         "label": predicted_label
     })
+
+@app.post("/predict")
+async def predict(file: UploadFile = File(...)):
+    image_bytes = await file.read()
+
+    payload = {
+        "inputs": image_bytes,
+        "parameters": {
+            "candidate_labels": labels
+        }
+    }
+
+    response = requests.post(API_URL, headers=headers, data=image_bytes)
+
+    result = response.json()
+
+    return JSONResponse(content=result)
