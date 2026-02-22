@@ -12,7 +12,7 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 
 # Model URL ta ekta single line e rakha bhalo jate kono newline ba space error na hoy
 # Version v1beta e rakha hoyeche karon flash model eitei bhalo kaj kore
-GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent"
+GEMINI_URL = "https://generativelanguage.googleapis.com/v1/models/gemini-2.5-flash:generateContent"
 
 @app.get("/")
 def home():
