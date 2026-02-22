@@ -3,16 +3,18 @@ from fastapi.responses import JSONResponse
 import os
 import base64
 import requests
+import json
 
 app = FastAPI()
 
 # Render Environment Variable: GEMINI_API_KEY
-# .strip() use kora hoyeche jate kono extra space na thake
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 
-# Model URL ta ekta single line e rakha bhalo jate kono newline ba space error na hoy
-# Version v1beta e rakha hoyeche karon flash model eitei bhalo kaj kore
-GEMINI_URL = "https://generativelanguage.googleapis.com/v1/models/gemini-2.5-flash:generateContent"
+# ✅ Use a model that exists in your list (you showed gemini-2.5-flash etc.)
+MODEL_NAME = "models/gemini-2.5-flash"
+
+# v1beta endpoint (OK for generateContent)
+GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/{MODEL_NAME}:generateContent"
 
 @app.get("/")
 def home():
@@ -20,26 +22,27 @@ def home():
 
 @app.post("/predict")
 async def predict(file: UploadFile = File(...)):
+    # 1) API key check
     if not GEMINI_API_KEY:
         return JSONResponse(
             status_code=500,
             content={"error": "GEMINI_API_KEY not set in Render Environment Variables"}
         )
 
-    # Image processing
+    # 2) Read image and convert to base64
     image_bytes = await file.read()
     img_b64 = base64.b64encode(image_bytes).decode("utf-8")
 
-    # Prompt structure
+    # 3) Strong prompt (ONLY JSON output)
     prompt = (
         "You are an accident detection system.\n"
-        "Look at the image and decide ONLY one label:\n"
+        "Decide ONLY ONE label for the image:\n"
         "1) accident\n"
         "2) non-accident\n\n"
         "Rules:\n"
         "- Output MUST be valid JSON only.\n"
-        "- JSON format: {\"label\":\"accident\"} or {\"label\":\"non-accident\"}\n"
-        "- No extra text.\n"
+        "- Exactly this format: {\"label\":\"accident\"} OR {\"label\":\"non-accident\"}\n"
+        "- No extra words, no explanation.\n"
     )
 
     payload = {
@@ -64,7 +67,7 @@ async def predict(file: UploadFile = File(...)):
 
     headers = {"Content-Type": "application/json"}
 
-    # Request path e query parameter hisebe API key pass kora hochhe
+    # 4) Call Gemini
     try:
         resp = requests.post(
             f"{GEMINI_URL}?key={GEMINI_API_KEY}",
@@ -78,22 +81,47 @@ async def predict(file: UploadFile = File(...)):
             content={"error": "Connection Error", "details": str(e)}
         )
 
+    # 5) If Gemini returns error
     if resp.status_code != 200:
-        return JSONResponse(
-            status_code=resp.status_code,
-            content={"error": "Gemini API error", "details": resp.json()}
-        )
+        # try to show json, otherwise show text
+        try:
+            return JSONResponse(
+                status_code=resp.status_code,
+                content={"error": "Gemini API error", "details": resp.json()}
+            )
+        except:
+            return JSONResponse(
+                status_code=resp.status_code,
+                content={"error": "Gemini API error", "details": resp.text}
+            )
 
     data = resp.json()
 
-    # Model theke response extract kora
+    # 6) Extract model output text
     try:
         text_out = data["candidates"][0]["content"]["parts"][0]["text"]
-        # JSON string theke extra whitespace ba newline remove kora
-        clean_result = text_out.strip()
-        return JSONResponse(content={"result": clean_result})
+        clean_text = text_out.strip()
+
+        # 7) Parse JSON output safely
+        # Sometimes Gemini returns JSON as a string -> we convert it to dict
+        try:
+            result_obj = json.loads(clean_text)
+        except:
+            # If parsing fails, fallback: try to detect label from text
+            lower = clean_text.lower()
+            if "non-accident" in lower:
+                result_obj = {"label": "non-accident"}
+            elif "accident" in lower:
+                result_obj = {"label": "accident"}
+            else:
+                result_obj = {"label": "unknown", "raw": clean_text}
+
+        # 8) Return clean final output
+        # Output will be {"label":"accident"} or {"label":"non-accident"}
+        return JSONResponse(content=result_obj)
+
     except (KeyError, IndexError):
         return JSONResponse(
-            status_code=500, 
+            status_code=500,
             content={"error": "Unexpected Gemini response structure", "raw": data}
         )
